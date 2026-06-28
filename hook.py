@@ -8,8 +8,7 @@ until a human decides. Exits 0 (approved) or 1 (rejected / timeout).
 
 Environment variables (required):
   INTRUPT_BASE_URL   Base URL of the intrupt approval API (e.g. https://api.aegmis.com)
-  INTRUPT_API_KEY    API key from Account → API Keys
-  INTRUPT_ORG_ID     Your organization ID
+  INTRUPT_API_KEY    API key from Account → API Keys (org ID is extracted automatically)
 
 Optional:
   INTRUPT_GATED_TOOLS     Comma-separated tool names to gate. Default: Bash,Write,Edit
@@ -33,7 +32,6 @@ from typing import Optional
 
 BASE_URL       = os.environ.get("INTRUPT_BASE_URL", "https://api.aegmis.com").rstrip("/")
 API_KEY        = os.environ.get("INTRUPT_API_KEY", "")
-ORG_ID         = os.environ.get("INTRUPT_ORG_ID", "")
 TIMEOUT        = int(os.environ.get("INTRUPT_TIMEOUT", "600"))
 POLL_INTERVAL  = int(os.environ.get("INTRUPT_POLL_INTERVAL", "5"))
 
@@ -78,6 +76,20 @@ _BYPASS = [re.compile(p, re.IGNORECASE) for p in _BYPASS_RAW.split(",") if p.str
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _extract_org_id(api_key: str) -> str:
+    """Extract org_id from API key format: sk_org_{org_id}_{hash}."""
+    if not api_key.startswith("sk_org_"):
+        _die("Invalid INTRUPT_API_KEY format — expected 'sk_org_{org_id}_{hash}'")
+    after_prefix = api_key[7:]  # strip "sk_org_"
+    last_underscore = after_prefix.rfind("_")
+    if last_underscore == -1:
+        _die("Invalid INTRUPT_API_KEY format — expected 'sk_org_{org_id}_{hash}'")
+    org_id = after_prefix[:last_underscore]
+    if not org_id.startswith("org_"):
+        _die(f"Could not extract org ID from API key — got '{org_id}'")
+    return org_id
+
 
 def _api(method: str, path: str, body: Optional[dict] = None) -> dict:
     """Minimal HTTP client using only stdlib — no dependencies required."""
@@ -169,14 +181,13 @@ def main() -> None:
     # 3. Validate config before making any API calls
     if not API_KEY:
         _die("INTRUPT_API_KEY is not set")
-    if not ORG_ID:
-        _die("INTRUPT_ORG_ID is not set")
+    org_id = _extract_org_id(API_KEY)
 
     action, message = _human_description(tool_name, tool_input)
     thread_id = str(uuid.uuid4())  # unique per hook invocation
 
     # 4. Create the approval request
-    resp = _api("POST", f"/org/{ORG_ID}/approval", {
+    resp = _api("POST", f"/org/{org_id}/approval", {
         "thread_id":   thread_id,
         "action":      action,
         "message":     message,
