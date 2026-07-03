@@ -28,7 +28,7 @@ Claude Code
 
 - Claude Code ≥ 1.0 (CLI, desktop, or IDE extension)
 - Python 3.10+
-- An [Aegmis](https://aegmis.com) account with an API key and org ID
+- An [Aegmis](https://aegmis.com) account with an API key
 - Slack workspace connected to your Aegmis org (for the default channel)
 
 ---
