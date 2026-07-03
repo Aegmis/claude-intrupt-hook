@@ -102,6 +102,9 @@ def _api(method: str, path: str, body: Optional[dict] = None) -> dict:
         headers={
             "Content-Type":  "application/json",
             "Authorization": f"Bearer {API_KEY}",
+            # Cloudflare returns HTTP 403 "error code: 1010" for the default
+            # Python-urllib User-Agent (banned browser signature). Send a real one.
+            "User-Agent":    "intrupt-hook/1.0",
         },
     )
     try:
@@ -196,15 +199,24 @@ def main() -> None:
         "tool_kwargs": tool_input,
     })
 
-    approval_id = resp.get("approval_id")
+    # The API may decide inline (e.g. auto-approve when no policy matches),
+    # returning a terminal status immediately. Honor it before polling.
+    status = resp.get("status", "pending")
+    if status == "approved":
+        sys.exit(0)
+    if status in ("rejected", "denied"):
+        _block(f"Approval rejected (status={status})")
+
+    # Otherwise a human must decide — grab the id to poll on.
+    approval_id = resp.get("approval_id") or resp.get("audit_id")
     if not approval_id:
-        _die(f"API did not return approval_id: {resp}")
+        _die(f"API did not return approval_id/audit_id: {resp}")
 
     # 5. Poll until decided or timeout
     deadline = time.monotonic() + TIMEOUT
     while time.monotonic() < deadline:
         time.sleep(POLL_INTERVAL)
-        status_resp = _api("GET", f"/org/{ORG_ID}/approval/{approval_id}")
+        status_resp = _api("GET", f"/org/{org_id}/approval/{approval_id}")
         status = status_resp.get("status", "pending")
 
         if status == "approved":
