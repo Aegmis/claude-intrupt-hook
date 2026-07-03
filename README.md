@@ -35,11 +35,22 @@ Claude Code
 
 ## Installation
 
+Install with a single command — no clone required:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Aegmis/claude-intrupt-hook/main/install.sh | bash
+```
+
+<details>
+<summary>Prefer to clone first?</summary>
+
 ```bash
 git clone https://github.com/Aegmis/claude-intrupt-hook.git
 cd claude-intrupt-hook
 bash install.sh
 ```
+
+</details>
 
 `install.sh` does three things:
 
@@ -256,7 +267,7 @@ You should see a Slack message appear within a few seconds.
 claude-intrupt-hook/
 ├── hook.py          # PreToolUse hook script (zero runtime dependencies)
 ├── test_hook.py     # Smoke tests for gating logic
-├── install.sh       # One-command installer
+├── install.sh       # One-line installer (curl-pipe or from a clone)
 ├── settings.json    # Claude Code settings snippet
 ├── .env.example     # Environment variable template
 └── README.md

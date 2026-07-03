@@ -1,45 +1,93 @@
 #!/usr/bin/env bash
 # Installs the intrupt PreToolUse hook into Claude Code.
-# Run once after cloning: bash install.sh
+#
+# One-line install (no clone needed):
+#   curl -fsSL https://raw.githubusercontent.com/Aegmis/claude-intrupt-hook/main/install.sh | bash
+#
+# Or, after cloning:
+#   bash install.sh
 
 set -euo pipefail
 
+# ── Configuration ────────────────────────────────────────────────────────────
+
+REPO_RAW="${INTRUPT_REPO_RAW:-https://raw.githubusercontent.com/Aegmis/claude-intrupt-hook/main}"
+
 HOOKS_DIR="$HOME/.claude/hooks"
 SETTINGS_FILE="$HOME/.claude/settings.json"
-HOOK_SRC="$(cd "$(dirname "$0")" && pwd)/hook.py"
 HOOK_DEST="$HOOKS_DIR/intrupt_hook.py"
+ENV_FILE="$HOME/.claude/.env.intrupt"
+
+# Directory of this script when run from a clone; empty when piped via curl.
+if [ -n "${BASH_SOURCE:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+else
+  SCRIPT_DIR=""
+fi
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+# fetch <relative-path> <dest>
+# Uses the local file if this script runs from a clone; otherwise downloads it.
+fetch() {
+  local rel="$1" dest="$2"
+  if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/$rel" ]; then
+    cp "$SCRIPT_DIR/$rel" "$dest"
+  elif command -v curl &>/dev/null; then
+    curl -fsSL "$REPO_RAW/$rel" -o "$dest"
+  elif command -v wget &>/dev/null; then
+    wget -qO "$dest" "$REPO_RAW/$rel"
+  else
+    echo "✗ Need curl or wget to download $rel" >&2
+    exit 1
+  fi
+}
+
+# ── Install hook script ──────────────────────────────────────────────────────
 
 echo "→ Creating hooks directory: $HOOKS_DIR"
 mkdir -p "$HOOKS_DIR"
 
-echo "→ Copying hook script"
-cp "$HOOK_SRC" "$HOOK_DEST"
+echo "→ Installing hook script"
+fetch "hook.py" "$HOOK_DEST"
 chmod +x "$HOOK_DEST"
 
 # ── Merge settings.json ──────────────────────────────────────────────────────
 
-merge_settings() {
-  local new_hook
-  new_hook=$(cat "$(dirname "$0")/settings.json")
+SETTINGS_JSON='{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 ~/.claude/hooks/intrupt_hook.py"
+          }
+        ]
+      }
+    ]
+  }
+}'
 
+merge_settings() {
   if [ ! -f "$SETTINGS_FILE" ]; then
     echo "→ Creating $SETTINGS_FILE"
-    cp "$(dirname "$0")/settings.json" "$SETTINGS_FILE"
+    printf '%s\n' "$SETTINGS_JSON" > "$SETTINGS_FILE"
     return
   fi
 
-  # If jq is available, merge properly; otherwise print manual instructions
   if command -v jq &>/dev/null; then
     echo "→ Merging hooks into existing $SETTINGS_FILE"
     tmp=$(mktemp)
-    jq -s '.[0] * .[1]' "$SETTINGS_FILE" <(echo "$new_hook") > "$tmp"
+    jq -s '.[0] * .[1]' "$SETTINGS_FILE" <(printf '%s' "$SETTINGS_JSON") > "$tmp"
     mv "$tmp" "$SETTINGS_FILE"
     echo "   Merged."
   else
     echo ""
     echo "⚠  jq not found — please manually add the following to $SETTINGS_FILE:"
     echo ""
-    cat "$(dirname "$0")/settings.json"
+    printf '%s\n' "$SETTINGS_JSON"
     echo ""
   fi
 }
@@ -47,8 +95,6 @@ merge_settings() {
 merge_settings
 
 # ── Environment variables ────────────────────────────────────────────────────
-
-ENV_FILE="$HOME/.claude/.env.intrupt"
 
 if [ ! -f "$ENV_FILE" ]; then
   echo "→ Creating env file at $ENV_FILE"
