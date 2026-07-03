@@ -36,7 +36,7 @@ Claude Code
 ## Installation
 
 ```bash
-git clone https://github.com/your-org/claude-intrupt-hook
+git clone https://github.com/Aegmis/claude-intrupt-hook.git
 cd claude-intrupt-hook
 bash install.sh
 ```
