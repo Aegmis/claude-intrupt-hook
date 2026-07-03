@@ -61,7 +61,6 @@ source ~/.claude/.env.intrupt
 ```bash
 export INTRUPT_BASE_URL=https://api.aegmis.com
 export INTRUPT_API_KEY=sk_org_xxxx_yyyy    # Account → API Keys
-export INTRUPT_ORG_ID=org_xxxx            # shown in your dashboard URL
 ```
 
 ---
@@ -150,7 +149,6 @@ All configuration is via environment variables.
 |---|---|---|---|
 | `INTRUPT_BASE_URL` | yes | — | intrupt API base URL |
 | `INTRUPT_API_KEY` | yes | — | API key from Account → API Keys |
-| `INTRUPT_ORG_ID` | yes | — | Your organization ID |
 | `INTRUPT_GATED_TOOLS` | no | `Bash,Write,Edit` | Comma-separated tool names to gate |
 | `INTRUPT_TIMEOUT` | no | `600` | Max seconds to wait for a decision |
 | `INTRUPT_POLL_INTERVAL` | no | `5` | Seconds between status polls |
