@@ -102,13 +102,12 @@ if [ ! -f "$ENV_FILE" ]; then
 # intrupt hook configuration — sourced by the hook script via direnv or shell profile
 export INTRUPT_BASE_URL=https://api.aegmis.com
 export INTRUPT_API_KEY=sk_org_xxxx_yyyy      # replace with your API key
-export INTRUPT_ORG_ID=org_xxxx              # replace with your org ID
 export INTRUPT_GATED_TOOLS=Bash,Write,Edit
 export INTRUPT_TIMEOUT=600
 export INTRUPT_POLL_INTERVAL=5
 EOF
   echo ""
-  echo "   Edit $ENV_FILE and fill in your INTRUPT_API_KEY and INTRUPT_ORG_ID."
+  echo "   Edit $ENV_FILE and fill in your INTRUPT_API_KEY."
   echo "   Then add this to your ~/.zshrc or ~/.bashrc:"
   echo ""
   echo "     source $ENV_FILE"
@@ -122,7 +121,7 @@ echo "  Hook:     $HOOK_DEST"
 echo "  Settings: $SETTINGS_FILE"
 echo ""
 echo "  Next steps:"
-echo "  1. Edit $ENV_FILE with your API key and org ID"
+echo "  1. Edit $ENV_FILE with your API key"
 echo "  2. Add  source $ENV_FILE  to ~/.zshrc (or ~/.bashrc)"
 echo "  3. Restart your shell or run:  source $ENV_FILE"
 echo "  4. Open Claude Code and try a gated command (e.g. git push)"
