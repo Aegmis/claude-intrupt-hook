@@ -12,10 +12,14 @@ Environment variables (required):
 
 Optional:
   INTRUPT_GATED_TOOLS     Comma-separated tool names to gate. Default: Bash,Write,Edit
+  INTRUPT_FORWARD_ALL     If true (default), forward every gated tool call to the
+                           policy engine and let server-side policies decide
+                           (unmatched calls are auto-approved). If false, use the
+                           local BASH_GATE_PATTERNS pre-filter instead.
   INTRUPT_TIMEOUT         Max seconds to wait for a decision. Default: 600 (10 min)
   INTRUPT_POLL_INTERVAL   Seconds between status polls. Default: 5
   INTRUPT_BYPASS_PATTERNS Comma-separated regex patterns for Bash commands that
-                           skip approval (allow-list). Overrides BASH_GATE_PATTERNS.
+                           skip approval (allow-list). Applied in both modes.
 """
 
 import json
@@ -34,6 +38,12 @@ BASE_URL       = os.environ.get("INTRUPT_BASE_URL", "https://api.aegmis.com").rs
 API_KEY        = os.environ.get("INTRUPT_API_KEY", "")
 TIMEOUT        = int(os.environ.get("INTRUPT_TIMEOUT", "600"))
 POLL_INTERVAL  = int(os.environ.get("INTRUPT_POLL_INTERVAL", "5"))
+
+# When true (default), forward every gated tool call to the Aegmis policy
+# engine and let server-side policies decide — unmatched calls are auto-approved.
+# When false, fall back to the local BASH_GATE_PATTERNS pre-filter below and
+# only forward Bash commands that match a risk pattern.
+FORWARD_ALL = os.environ.get("INTRUPT_FORWARD_ALL", "true").lower() in ("1", "true", "yes")
 
 GATED_TOOLS = {
     t.strip()
@@ -177,9 +187,17 @@ def main() -> None:
 
     if tool_name == "Bash":
         command = tool_input.get("command", "")
-        gate, matched = _should_gate_bash(command)
-        if not gate:
-            sys.exit(0)  # low-risk command — allow
+        if FORWARD_ALL:
+            # Forward everything to the policy engine, but let the local
+            # allow-list still short-circuit known-safe commands to avoid a
+            # network round-trip on every `ls`/`cat`.
+            for bypass in _BYPASS:
+                if bypass.search(command):
+                    sys.exit(0)
+        else:
+            gate, matched = _should_gate_bash(command)
+            if not gate:
+                sys.exit(0)  # low-risk command — allow locally
 
     # 3. Validate config before making any API calls
     if not API_KEY:
