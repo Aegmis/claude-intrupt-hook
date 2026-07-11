@@ -17,10 +17,11 @@ HOOK = os.path.join(os.path.dirname(__file__), "hook.py")
 # Minimal env so the hook runs without real creds in dry-run mode
 BASE_ENV = {
     **os.environ,
-    "INTRUPT_BASE_URL": "http://127.0.0.1:19999",   # nothing listening → connection refused
-    "INTRUPT_API_KEY":  "test_key",
-    "INTRUPT_ORG_ID":   "test_org",
-    "INTRUPT_GATED_TOOLS": "Bash,Write,Edit",
+    "AEGMIS_BASE_URL": "http://127.0.0.1:19999",   # nothing listening → connection refused
+    "AEGMIS_API_KEY":  "test_key",
+    "AEGMIS_ORG_ID":   "test_org",
+    "AEGMIS_GATED_TOOLS": "Bash,Write,Edit",
+    "AEGMIS_FORWARD_ALL": "false",   # exercise local pattern gating
 }
 
 CASES = [
@@ -31,9 +32,12 @@ CASES = [
     ("Bash — ls (allowed)",
      {"tool_name": "Bash", "tool_input": {"command": "ls -la"}},
      False),
-    ("Bash — rm -rf (gated)",
-     {"tool_name": "Bash", "tool_input": {"command": "rm -rf ./dist"}},
+    ("Bash — rm -rf ~ (catastrophic, gated)",
+     {"tool_name": "Bash", "tool_input": {"command": "rm -rf ~"}},
      True),
+    ("Bash — rm file (routine, allowed)",
+     {"tool_name": "Bash", "tool_input": {"command": "rm notes.txt"}},
+     False),
     ("Bash — git status (allowed)",
      {"tool_name": "Bash", "tool_input": {"command": "git status"}},
      False),

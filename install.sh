@@ -11,7 +11,7 @@ set -euo pipefail
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
-REPO_RAW="${INTRUPT_REPO_RAW:-https://raw.githubusercontent.com/Aegmis/claude-intrupt-hook/main}"
+REPO_RAW="${AEGMIS_REPO_RAW:-https://raw.githubusercontent.com/Aegmis/claude-intrupt-hook/main}"
 
 HOOKS_DIR="$HOME/.claude/hooks"
 SETTINGS_FILE="$HOME/.claude/settings.json"
@@ -100,14 +100,16 @@ if [ ! -f "$ENV_FILE" ]; then
   echo "→ Creating env file at $ENV_FILE"
   cat > "$ENV_FILE" <<'EOF'
 # intrupt hook configuration — sourced by the hook script via direnv or shell profile
-export INTRUPT_BASE_URL=https://api.aegmis.com
-export INTRUPT_API_KEY=sk_org_xxxx_yyyy      # replace with your API key
-export INTRUPT_GATED_TOOLS=Bash,Write,Edit
-export INTRUPT_TIMEOUT=600
-export INTRUPT_POLL_INTERVAL=5
+export AEGMIS_BASE_URL=https://api.aegmis.com
+export AEGMIS_API_KEY=sk_org_xxxx_yyyy      # replace with your API key
+export AEGMIS_APPROVAL=true          # set false to disable the gate entirely
+export AEGMIS_GATED_TOOLS=Bash,Write,Edit
+export AEGMIS_TIMEOUT=600
+export AEGMIS_POLL_INTERVAL=5
+# AEGMIS_PROTECTED_PATHS=/Users/you/work,/data   # extra dirs to gate rm on
 EOF
   echo ""
-  echo "   Edit $ENV_FILE and fill in your INTRUPT_API_KEY."
+  echo "   Edit $ENV_FILE and fill in your AEGMIS_API_KEY."
   echo "   Then add this to your ~/.zshrc or ~/.bashrc:"
   echo ""
   echo "     source $ENV_FILE"

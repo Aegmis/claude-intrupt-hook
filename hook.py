@@ -7,18 +7,18 @@ a pending approval (which notifies the approver via Slack), then polls
 until a human decides. Exits 0 (approved) or 1 (rejected / timeout).
 
 Environment variables (required):
-  INTRUPT_BASE_URL   Base URL of the intrupt approval API (e.g. https://api.aegmis.com)
-  INTRUPT_API_KEY    API key from Account → API Keys (org ID is extracted automatically)
+  AEGMIS_BASE_URL   Base URL of the intrupt approval API (e.g. https://api.aegmis.com)
+  AEGMIS_API_KEY    API key from Account → API Keys (org ID is extracted automatically)
 
 Optional:
-  INTRUPT_GATED_TOOLS     Comma-separated tool names to gate. Default: Bash,Write,Edit
-  INTRUPT_FORWARD_ALL     If true (default), forward every gated tool call to the
+  AEGMIS_GATED_TOOLS     Comma-separated tool names to gate. Default: Bash,Write,Edit
+  AEGMIS_FORWARD_ALL     If true (default), forward every gated tool call to the
                            policy engine and let server-side policies decide
                            (unmatched calls are auto-approved). If false, use the
                            local BASH_GATE_PATTERNS pre-filter instead.
-  INTRUPT_TIMEOUT         Max seconds to wait for a decision. Default: 600 (10 min)
-  INTRUPT_POLL_INTERVAL   Seconds between status polls. Default: 5
-  INTRUPT_BYPASS_PATTERNS Comma-separated regex patterns for Bash commands that
+  AEGMIS_TIMEOUT         Max seconds to wait for a decision. Default: 600 (10 min)
+  AEGMIS_POLL_INTERVAL   Seconds between status polls. Default: 5
+  AEGMIS_BYPASS_PATTERNS Comma-separated regex patterns for Bash commands that
                            skip approval (allow-list). Applied in both modes.
 """
 
@@ -34,28 +34,32 @@ from typing import Optional
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-BASE_URL       = os.environ.get("INTRUPT_BASE_URL", "https://api.aegmis.com").rstrip("/")
-API_KEY        = os.environ.get("INTRUPT_API_KEY", "")
-TIMEOUT        = int(os.environ.get("INTRUPT_TIMEOUT", "600"))
-POLL_INTERVAL  = int(os.environ.get("INTRUPT_POLL_INTERVAL", "5"))
+BASE_URL       = os.environ.get("AEGMIS_BASE_URL", "https://api.aegmis.com").rstrip("/")
+API_KEY        = os.environ.get("AEGMIS_API_KEY", "")
+TIMEOUT        = int(os.environ.get("AEGMIS_TIMEOUT", "600"))
+POLL_INTERVAL  = int(os.environ.get("AEGMIS_POLL_INTERVAL", "5"))
 
 # When true (default), forward every gated tool call to the Aegmis policy
 # engine and let server-side policies decide — unmatched calls are auto-approved.
 # When false, fall back to the local BASH_GATE_PATTERNS pre-filter below and
 # only forward Bash commands that match a risk pattern.
-FORWARD_ALL = os.environ.get("INTRUPT_FORWARD_ALL", "true").lower() in ("1", "true", "yes")
+FORWARD_ALL = os.environ.get("AEGMIS_FORWARD_ALL", "true").lower() in ("1", "true", "yes")
+
+# Kill switch: AEGMIS_APPROVAL=false disables the gate entirely (allow all).
+APPROVAL_ENABLED = os.environ.get("AEGMIS_APPROVAL", "true").lower() not in ("0", "false", "no", "off", "disable", "disabled")
 
 GATED_TOOLS = {
     t.strip()
-    for t in os.environ.get("INTRUPT_GATED_TOOLS", "Bash,Write,Edit").split(",")
+    for t in os.environ.get("AEGMIS_GATED_TOOLS", "Bash,Write,Edit").split(",")
     if t.strip()
 }
 
 # Bash commands matching ANY of these patterns require approval.
 # Keep patterns specific to reduce interruption noise.
 BASH_GATE_PATTERNS: list[str] = [
-    r"\brm\s+.*-[a-z]*r",          # recursive delete: rm -rf, rm -r
-    r"\brm\s+.*-[a-z]*f",          # force delete
+    # Catastrophic deletions only — home/root/system dirs or a bare */./..  Routine
+    # and project-local deletes (rm file, rm -rf node_modules/build) pass through.
+    r"\brm\b[\s\S]*\s(~/?(\s|$)|\$\{?HOME\}?/?(\s|$)|/(\s|$)|/\*|/(Users|home)/[^/\s]+/?(\s|$)|/(etc|usr|var|bin|sbin|opt|System|Library|private|boot|dev|lib|sys|proc)(/|\s|$)|\*(\s|$)|\.(\s|$)|\.\.(/|\s|$))",
     r"\bgit\s+push\b",             # any git push (including --force)
     r"\bgit\s+reset\s+--hard\b",
     r"\bgh\s+pr\s+merge\b",
@@ -78,10 +82,44 @@ BASH_GATE_PATTERNS: list[str] = [
 ]
 
 # Compile once at startup
+# User-defined protected paths (AEGMIS_PROTECTED_PATHS) — also gate `rm` of each
+# listed path and anything under it, on top of the built-in catastrophic targets.
+for _pp in os.environ.get("AEGMIS_PROTECTED_PATHS", "").split(","):
+    _pp = _pp.strip().rstrip("/")
+    if _pp:
+        BASH_GATE_PATTERNS.append(r"\brm\b[\s\S]*\s" + re.escape(_pp) + r"(/|\s|$)")
+
 _COMPILED = [re.compile(p, re.IGNORECASE) for p in BASH_GATE_PATTERNS]
 
+# Protected paths (AEGMIS_PROTECTED_PATHS) resolved for cwd-aware matching — this
+# catches relative rm targets (./ok, ok, ../x) that literal patterns would miss.
+_STATE = {"cwd": ""}
+_PROTECTED = [
+    __import__("os").path.normpath(__import__("os").path.expanduser(_pp.strip().rstrip("/")))
+    for _pp in os.environ.get("AEGMIS_PROTECTED_PATHS", "").split(",")
+    if _pp.strip()
+]
+
+
+def _rm_hits_protected(command: str) -> bool:
+    """True if an rm target in `command`, resolved against cwd, is a protected path."""
+    if not _PROTECTED or not re.search(r"\brm\b", command):
+        return False
+    for tok in command.split():
+        t = tok.strip("'\"")
+        if not t or t in ("rm", "sudo", "--") or t.startswith("-"):
+            continue
+        t = os.path.expanduser(t)
+        cand = t if os.path.isabs(t) else os.path.normpath(os.path.join(_STATE["cwd"] or ".", t))
+        cand = os.path.normpath(cand).rstrip("/")
+        for prot in _PROTECTED:
+            if cand == prot or cand.startswith(prot + "/"):
+                return True
+    return False
+
+
 # Optional allow-list: patterns whose matching Bash commands bypass approval
-_BYPASS_RAW = os.environ.get("INTRUPT_BYPASS_PATTERNS", "")
+_BYPASS_RAW = os.environ.get("AEGMIS_BYPASS_PATTERNS", "")
 _BYPASS = [re.compile(p, re.IGNORECASE) for p in _BYPASS_RAW.split(",") if p.strip()]
 
 
@@ -90,11 +128,11 @@ _BYPASS = [re.compile(p, re.IGNORECASE) for p in _BYPASS_RAW.split(",") if p.str
 def _extract_org_id(api_key: str) -> str:
     """Extract org_id from API key format: sk_org_{org_id}_{hash}."""
     if not api_key.startswith("sk_org_"):
-        _die("Invalid INTRUPT_API_KEY format — expected 'sk_org_{org_id}_{hash}'")
+        _die("Invalid AEGMIS_API_KEY format — expected 'sk_org_{org_id}_{hash}'")
     after_prefix = api_key[7:]  # strip "sk_org_"
     last_underscore = after_prefix.rfind("_")
     if last_underscore == -1:
-        _die("Invalid INTRUPT_API_KEY format — expected 'sk_org_{org_id}_{hash}'")
+        _die("Invalid AEGMIS_API_KEY format — expected 'sk_org_{org_id}_{hash}'")
     org_id = after_prefix[:last_underscore]
     if not org_id.startswith("org_"):
         _die(f"Could not extract org ID from API key — got '{org_id}'")
@@ -124,7 +162,7 @@ def _api(method: str, path: str, body: Optional[dict] = None) -> dict:
         body_text = exc.read().decode(errors="replace")
         _die(f"intrupt API {method} {path} → HTTP {exc.code}: {body_text}")
     except urllib.error.URLError as exc:
-        _die(f"intrupt API unreachable ({exc.reason}). Is INTRUPT_BASE_URL correct?")
+        _die(f"intrupt API unreachable ({exc.reason}). Is AEGMIS_BASE_URL correct?")
 
 
 def _block(reason: str) -> None:
@@ -147,6 +185,8 @@ def _should_gate_bash(command: str) -> tuple[bool, str]:
     for bypass in _BYPASS:
         if bypass.search(command):
             return False, ""
+    if _rm_hits_protected(command):
+        return True, "protected-path"
     for pattern in _COMPILED:
         if pattern.search(command):
             return True, pattern.pattern
@@ -173,10 +213,14 @@ def _human_description(tool_name: str, tool_input: dict) -> tuple[str, str]:
 def main() -> None:
     # 1. Parse stdin payload from Claude Code
     raw = sys.stdin.read()
+    if not APPROVAL_ENABLED:
+        sys.exit(0)  # AEGMIS_APPROVAL disabled — allow without gating
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
         _die("Could not parse hook payload from stdin")
+
+    _STATE["cwd"] = payload.get("cwd") or payload.get("working_dir") or ""
 
     tool_name  = payload.get("tool_name", "")
     tool_input = payload.get("tool_input", {})
@@ -201,7 +245,7 @@ def main() -> None:
 
     # 3. Validate config before making any API calls
     if not API_KEY:
-        _die("INTRUPT_API_KEY is not set")
+        _die("AEGMIS_API_KEY is not set")
     org_id = _extract_org_id(API_KEY)
 
     action, message = _human_description(tool_name, tool_input)
@@ -215,6 +259,7 @@ def main() -> None:
         "channel":     "slack",
         "tool_name":   tool_name,
         "tool_kwargs": tool_input,
+        "adapter":     "claude_cli",
     })
 
     # The API may decide inline (e.g. auto-approve when no policy matches),
