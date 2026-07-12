@@ -102,11 +102,12 @@ if [ ! -f "$ENV_FILE" ]; then
 # intrupt hook configuration — sourced by the hook script via direnv or shell profile
 export AEGMIS_BASE_URL=https://api.aegmis.com
 export AEGMIS_API_KEY=sk_org_xxxx_yyyy      # replace with your API key
-export AEGMIS_APPROVAL=true          # set false to disable the gate entirely
-export AEGMIS_GATED_TOOLS=Bash,Write,Edit
+export AEGMIS_APPROVAL=true            # set false to disable the gate entirely
+export AEGMIS_FORWARD_ALL=false        # local mode: the hook decides (no server round-trip)
+export AEGMIS_GATED_TOOLS=Bash         # gate shell only (not Write/Edit)
+export AEGMIS_PROTECTED_PATHS="re:^$HOME$"  # gate rm of the home dir ITSELF (not its contents)
 export AEGMIS_TIMEOUT=600
 export AEGMIS_POLL_INTERVAL=5
-# AEGMIS_PROTECTED_PATHS=/Users/you/work,/data   # extra dirs to gate rm on
 EOF
   echo ""
   echo "   Edit $ENV_FILE and fill in your AEGMIS_API_KEY."
