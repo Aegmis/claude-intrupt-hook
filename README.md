@@ -23,8 +23,13 @@ Claude Code
         │
         ▼
   exit 0  →  Claude continues
-  exit 1  →  Claude is blocked
+  exit 2  →  Claude is blocked (reason on stderr, shown to the model)
 ```
+
+> **Block contract:** Claude Code blocks a tool call on hook **exit code 2**
+> (never exit 1 — that's a non-blocking hook error and the tool would still run).
+> Every deny path here exits 2, and any crash is converted to a blocking exit 2,
+> so the gate fails **closed**.
 
 ---
 
@@ -171,9 +176,10 @@ The hook polls `GET /org/{org_id}/approval/{approval_id}` every 5 seconds until:
 | Outcome | Exit code | Claude Code |
 |---|---|---|
 | Human clicks **Approve** | `0` | Tool runs normally |
-| Human clicks **Reject** | `1` | Tool is blocked, reason shown to Claude |
-| Timeout (default 10 min) | `1` | Tool is blocked with timeout message |
-| API unreachable | `1` | Tool is blocked (fail closed) |
+| Human clicks **Reject** | `2` | Tool is blocked, reason shown to Claude |
+| Timeout (default 10 min) | `2` | Tool is blocked with timeout message |
+| API unreachable | `2` | Tool is blocked (fail closed) |
+| Hook crashes | `2` | Tool is blocked (fail closed) |
 
 ---
 
@@ -317,7 +323,8 @@ export AEGMIS_GATED_TOOLS=Bash,Write,Edit,Agent
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/intrupt_hook.py"
+            "command": "python3 ~/.claude/hooks/intrupt_hook.py",
+            "timeout": 630
           }
         ]
       }
@@ -327,6 +334,11 @@ export AEGMIS_GATED_TOOLS=Bash,Write,Edit,Agent
 ```
 
 To add it manually, merge this block into your existing `settings.json`.
+
+> **Why `"timeout": 630`?** The hook blocks while it waits for a human (up to
+> `AEGMIS_TIMEOUT`, default 600s). Claude Code's default per-hook timeout is far
+> shorter (~60s), and a hook Claude Code kills is a **non-blocking** error — the
+> tool would run. The `630` here must always exceed `AEGMIS_TIMEOUT`.
 
 ---
 
@@ -421,9 +433,44 @@ You should see a Slack message appear within a few seconds.
 
 ---
 
+## Defense in depth — pair the hook with the sandbox
+
+This hook is an **approval gate on the agent's declared tool calls**. It reasons
+about a command string, so a determined agent can still evade a pattern denylist
+(obfuscation, a written-then-executed script, a subprocess it never surfaces).
+For real containment, run it **on top of Claude Code's native sandbox**, which
+enforces limits at the OS level where the agent can't reach:
+
+```json
+{
+  "sandbox": {
+    "enabled": true,
+    "network": { "allowedDomains": ["api.aegmis.com", "github.com"] },
+    "filesystem": {
+      "denyWrite": ["~/.ssh", "~/.claude", "~/.aws"],
+      "denyRead":  ["~/.ssh", "~/.aws"]
+    }
+  }
+}
+```
+
+Deny-by-default network stops the "push the codebase somewhere public" class
+outright; filesystem `denyWrite` stops edits to your secrets and to this hook's
+own config. Think of it as: **sandbox = the wall, `permissions.deny` = tripwires
+that never ask, this hook = the doorbell for the ambiguous middle.**
+
 ## Security notes
 
-- The hook **fails closed**: if the API is unreachable, the env vars are missing, or the request times out, the tool call is blocked — not allowed.
+- The hook **fails closed**: on reject, timeout, unreachable API, missing config,
+  or a crash, the tool call is **blocked** (exit 2) — never allowed. The block is
+  the process **exit code**, so it holds even under `--dangerously-skip-permissions`.
+- **Workspace & self-protection always apply** (both modes): wiping the project
+  dir or an ancestor (`rm -rf .`, `rm -rf "$HOME"`, `find . -delete`, `git clean -fdx`)
+  is gated, and writes/edits to the hook's own config (`~/.claude/…`) are gated
+  even when `AEGMIS_GATED_TOOLS` lists only `Bash`.
+- Command **chains are split** (`&&`, `||`, `;`, `|`) and each segment is judged
+  on its own, so a benign first command can't shield a risky one, and a bypass
+  pattern only waives the segment it matches.
 - `AEGMIS_API_KEY` is sent as a `Bearer` token. Keep it out of your shell history and `.bashrc` — use a secrets manager or the `.env.intrupt` file with `600` permissions.
 - The hook never stores or logs the tool input beyond what is sent to the API.
 

@@ -62,7 +62,8 @@ SETTINGS_JSON='{
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ~/.claude/hooks/intrupt_hook.py"
+            "command": "python3 ~/.claude/hooks/intrupt_hook.py",
+            "timeout": 630
           }
         ]
       }
